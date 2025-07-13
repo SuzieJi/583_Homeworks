@@ -110,13 +110,14 @@ def prove_merkle(merkle_tree, random_indx):
     """
     merkle_proof = []
     # TODO YOUR CODE HERE
-    for level in merkle_tree[:-1]:  
+    idx = random_indx
+    for level in merkle_tree[:-1]:
         pair_idx = idx ^ 1
-        if pair_idx >= len(level):
-            pair_hash = level[idx]
+        if pair_idx < len(level):
+            sibling = level[pair_idx]
         else:
-            pair_hash = level[pair_idx]
-        merkle_proof.append(pair_hash)
+            sibling = level[idx]
+        merkle_proof.append(sibling)
         idx //= 2
     return merkle_proof
 
