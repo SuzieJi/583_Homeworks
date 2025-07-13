@@ -168,6 +168,7 @@ def send_signed_msg(proof, random_leaf):
     raw = w3.eth.send_raw_transaction(signed.rawTransaction)
     tx_hash = raw.hex()
 
+
     return tx_hash
 
 
