@@ -152,22 +152,13 @@ def send_signed_msg(proof, random_leaf):
     """
     chain = 'bsc'
 
-    acct = get_account()
+    # acct = get_account()
     address, abi = get_contract_info(chain)
     w3 = connect_to(chain)
 
     # TODO YOUR CODE HERE
     contract = w3.eth.contract(address=address, abi=abi)
-    tx = contract.functions.submit(proof, random_leaf).buildTransaction({
-        'from': acct.address,
-        'nonce': w3.eth.get_transaction_count(acct.address),
-        'gas': 200000,
-        'gasPrice': w3.toWei('10', 'gwei'),
-        # 'chainId': w3.eth.chain_id
-    })
-    signed = acct.sign_transaction(tx)
-    raw = w3.eth.send_raw_transaction(signed.rawTransaction)
-    tx_hash = raw.hex()
+    tx_hash = contract.functions.submit(proof, random_leaf)
 
     return tx_hash
 
