@@ -50,92 +50,57 @@ def scan_blocks(chain, contract_info="contract_info.json"):
         return 0
     
     #YOUR CODE HERE
-    # 1. Load on‑chain info
-    info = get_contract_info(chain, contract_info)
-    w3 = connect_to(chain)
+    info         = get_contract_info(chain, contract_info)
+    w3           = connect_to(chain)
+    my_addr      = info["address"]
+    my_abi       = info["abi"]
+    my_priv      = info["private_key"]
+    my_account   = w3.eth.account.from_key(my_priv).address
+    my_contract  = w3.eth.contract(address=my_addr, abi=my_abi)
 
-    # 2. Prepare our own contract instance
-    my_address    = info["address"]
-    my_abi        = info["abi"]
-    my_priv_key   = info["private_key"]
-    my_account    = w3.eth.account.from_key(my_priv_key).address
-    my_contract   = w3.eth.contract(address=my_address, abi=my_abi)
-
-    # 3. Determine counterpart chain + contract
     if chain == "source":
-        event_name      = "Deposit"
-        other_chain     = "destination"
-        other_info      = get_contract_info(other_chain, contract_info)
-        other_w3        = connect_to(other_chain)
-        other_contract  = other_w3.eth.contract(
-                             address=other_info["address"],
-                             abi=other_info["abi"]
-                          )
-        other_priv_key  = other_info["private_key"]
-        other_account   = other_w3.eth.account.from_key(other_priv_key).address
+        evt_name      = "Deposit"
+        other_chain   = "destination"
+    else:
+        evt_name      = "Unwrap"
+        other_chain   = "source"
 
-    else:  # destination
-        event_name      = "Unwrap"
-        other_chain     = "source"
-        other_info      = get_contract_info(other_chain, contract_info)
-        other_w3        = connect_to(other_chain)
-        other_contract  = other_w3.eth.contract(
-                             address=other_info["address"],
-                             abi=other_info["abi"]
-                          )
-        other_priv_key  = other_info["private_key"]
-        other_account   = other_w3.eth.account.from_key(other_priv_key).address
+    other_info    = get_contract_info(other_chain, contract_info)
+    other_w3      = connect_to(other_chain)
+    other_contract = other_w3.eth.contract(
+        address=other_info["address"],
+        abi=other_info["abi"]
+    )
+    other_priv    = other_info["private_key"]
+    other_account = other_w3.eth.account.from_key(other_priv).address
 
-    # 4. Scan the last 5 blocks
     latest     = w3.eth.get_block_number()
-    start_block= max(0, latest - 5)
-    print(f"Scanning {chain} blocks {start_block} → {latest}")
+    start_blk  = max(0, latest - 5)
+    print(f"Scanning {chain} blocks {start_blk} → {latest}")
 
-    # 5. Pull events in bulk
-    event_obj = getattr(my_contract.events, event_name)
-    filt = event_obj.createFilter(fromBlock=start_block, toBlock=latest)
-    entries = filt.get_all_entries()
+    event_obj = getattr(my_contract.events, evt_name)
+    evfilter  = event_obj.createFilter(fromBlock=start_blk, toBlock=latest)
+    entries   = evfilter.get_all_entries()
 
-    for evt in entries:
-        # 6. Extract common fields
-        tx_hash = evt.transactionHash.hex()
-        print(f"  • {event_name} @ block {evt.blockNumber}, tx {tx_hash}")
-
-        if event_name == "Deposit":
-            token     = evt.args["token"]
-            recipient = evt.args["recipient"]
-            amount    = evt.args["amount"]
-
-            # 7 Build wrap() call on destination
-            tx = other_contract.functions.wrap(
-                     token, recipient, amount
-                 ).buildTransaction({
-                     "from": other_account,
-                     "nonce": other_w3.eth.get_transaction_count(other_account),
-                     "gas": 200_000,
-                     "gasPrice": other_w3.eth.gas_price,
-                 })
-            sig = other_w3.eth.account.sign_transaction(tx, other_priv_key)
-            sent = other_w3.eth.send_raw_transaction(sig.rawTransaction)
-            print(f"    → wrap() sent: {sent.hex()}")
-
+    for ev in entries:
+        print(f"  • {evt_name} at block {ev.blockNumber}, tx {ev.transactionHash.hex()}")
+        if evt_name == "Deposit":
+            token     = ev.args["token"]
+            recipient = ev.args["recipient"]
+            amount    = ev.args["amount"]
+            tx_fn     = other_contract.functions.wrap(token, recipient, amount)
         else:  # Unwrap
-            underlying = evt.args["underlying_token"]
-            wrapped    = evt.args["wrapped_token"]
-            frm        = evt.args["frm"]
-            to_addr    = evt.args["to"]
-            amount     = evt.args["amount"]
+            wrapped   = ev.args["wrapped_token"]
+            to_addr   = ev.args["to"]
+            amount    = ev.args["amount"]
+            tx_fn     = other_contract.functions.withdraw(wrapped, to_addr, amount)
 
-            # 7 Build withdraw() call on source
-            tx = other_contract.functions.withdraw(
-                     wrapped, to_addr, amount
-                 ).buildTransaction({
-                     "from": other_account,
-                     "nonce": other_w3.eth.get_transaction_count(other_account),
-                     "gas": 200_000,
-                     "gasPrice": other_w3.eth.gas_price,
-                 })
-            sig = other_w3.eth.account.sign_transaction(tx, other_priv_key)
-            sent = other_w3.eth.send_raw_transaction(sig.rawTransaction)
-            print(f"    → withdraw() sent: {sent.hex()}")
-
+        tx = tx_fn.buildTransaction({
+            "from": other_account,
+            "nonce": other_w3.eth.get_transaction_count(other_account),
+            "gas": 200_000,
+            "gasPrice": other_w3.eth.gas_price,
+        })
+        signed = other_w3.eth.account.sign_transaction(tx, other_priv)
+        tx_hash = other_w3.eth.send_raw_transaction(signed.rawTransaction)
+        print(f"    → sent tx: {tx_hash.hex()}")
