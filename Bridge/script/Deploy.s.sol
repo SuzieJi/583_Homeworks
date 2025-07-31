@@ -6,72 +6,89 @@ import "forge-std/console.sol";
 import "../src/Source.sol";
 import "../src/Destination.sol";
 
-contract DeployScript is Script {
-// List of ERC20 token addresses from erc20s.csv
-
-    address[] tokensToBridge = [
+contract Deploy is Script {
+    
+    // ERC20 token addresses from erc20s.csv
+    address[] erc20Tokens = [
         0xc677c31AD31F73A5290f5ef067F8CEF8d301e45c,
         0x0773b81e0524447784CcE1F3808fed6AaA156eC8
     ];
-  function run() external {
-      // Load deployer private key
-      uint256 key = vm.envUint("PRIVATE_KEY");
-      address deployer = vm.addr(key);
-      console.log("Using deployer:", deployer);
-      console.log("Current chain ID:", block.chainid);
 
-      vm.startBroadcast(key);
-      if (block.chainid == 43113) {
-          _deploySource(deployer);
-      } else if (block.chainid == 97) {
-          _deployDestination(deployer);
-      } else {
-          console.log("Chain not supported, id:", block.chainid);
-      }
-      vm.stopBroadcast();
-  }
+    function run() external {
+        // Get private key from environment variable
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
+        
+        console.log("Deploying contracts with account:", deployer);
+        console.log("Chain ID:", block.chainid);
 
-  function _deploySource(address admin) internal {
-      console.log("\n=== Deploying Source on Avalanche Fuji ===");
-      Source src = new Source(admin);
-      console.log("Source address:", address(src));
+        vm.startBroadcast(deployerPrivateKey);
 
-      console.log("\n=== Registering Bridgeable Tokens ===");
-      for (uint i = 0; i < tokensToBridge.length; i++) {
-          address t = tokensToBridge[i];
-          if (!src.approved(t)) {
-              src.registerToken(t);
-              console.log("Registered token:", t);
-          } else {
-              console.log("Already registered:", t);
-          }
-      }
+        if (block.chainid == 43113) {
+            // Avalanche testnet - Deploy Source contract
+            deploySourceContract(deployer);
+        } else if (block.chainid == 97) {
+            // BSC testnet - Deploy Destination contract  
+            deployDestinationContract(deployer);
+        } else {
+            console.log("Unsupported chain ID:", block.chainid);
+            return;
+        }
 
-      console.log("\n=== Source Deployment Done ===");
-      console.log("Save Source contract at:", address(src));
-  }
+        vm.stopBroadcast();
+    }
 
-  function _deployDestination(address admin) internal {
-      console.log("\n=== Deploying Destination on BSC Testnet ===");
-      Destination dst = new Destination(admin);
-      console.log("Destination address:", address(dst));
+    function deploySourceContract(address admin) internal {
+        console.log("\n=== Deploying Source Contract on Avalanche ===");
+        
+        Source source = new Source(admin);
+        console.log("Source contract deployed to:", address(source));
 
-      console.log("\n=== Creating Wrapped Tokens ===");
-      for (uint i = 0; i < tokensToBridge.length; i++) {
-          address t = tokensToBridge[i];
-          if (dst.wrapped_tokens(t) == address(0)) {
-              string memory nm = string(abi.encodePacked("Bridged", vm.toString(i)));
-              string memory sym = string(abi.encodePacked("B", vm.toString(i)));
-              address w = dst.createToken(t, nm, sym);
-              console.log("Wrapped for", t, "→", w);
-          } else {
-              console.log("Wrapped exists for:", t);
-          }
-      }
+        // Register tokens
+        console.log("\n=== Registering Tokens on Source ===");
+        for (uint i = 0; i < erc20Tokens.length; i++) {
+            address token = erc20Tokens[i];
+            
+            // Check if already registered
+            if (!source.approved(token)) {
+                source.registerToken(token);
+                console.log("Token registered:", token);
+            } else {
+                console.log("Token already registered:", token);
+            }
+        }
 
-      console.log("\n=== Destination Deployment Done ===");
-      console.log("Save Destination contract at:", address(dst));
-  }
+        console.log("\n=== Source Deployment Complete ===");
+        console.log("Source Contract Address:", address(source));
+        console.log("Save this address to your contract_info.json file");
+    }
 
+    function deployDestinationContract(address admin) internal {
+        console.log("\n=== Deploying Destination Contract on BSC ===");
+        
+        Destination destination = new Destination(admin);
+        console.log("Destination contract deployed to:", address(destination));
+
+        // Create wrapped tokens
+        console.log("\n=== Creating Wrapped Tokens on Destination ===");
+        for (uint i = 0; i < erc20Tokens.length; i++) {
+            address token = erc20Tokens[i];
+            
+            // Check if wrapped token already exists
+            if (destination.wrapped_tokens(token) == address(0)) {
+                string memory name = string(abi.encodePacked("Wrapped Token ", vm.toString(i + 1)));
+                string memory symbol = string(abi.encodePacked("WT", vm.toString(i + 1)));
+                
+                address wrappedToken = destination.createToken(token, name, symbol);
+                console.log("Wrapped token created for", token);
+                console.log("Wrapped token address:", wrappedToken);
+            } else {
+                console.log("Wrapped token already exists for:", token);
+            }
+        }
+
+        console.log("\n=== Destination Deployment Complete ===");
+        console.log("Destination Contract Address:", address(destination));
+        console.log("Save this address to your contract_info.json file");
+    }
 }
-
