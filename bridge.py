@@ -4,6 +4,8 @@ from web3.middleware import ExtraDataToPOAMiddleware #Necessary for POA chains
 from datetime import datetime
 import json
 import pandas as pd
+import time
+from random import uniform
 
 
 def connect_to(chain):
