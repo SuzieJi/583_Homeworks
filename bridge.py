@@ -10,11 +10,11 @@ from random import uniform
 
 def connect_to(chain):
     if chain == 'source':  # The source contract chain is avax
-        api_url = f"https://avalanche-fuji.core.chainstack.com/ext/bc/C/rpc/ff2b7d36d32d122520d449b60f182b8d"
+        api_url = f"https://avalanche-fuji.core.chainstack.com/ext/bc/C/rpc/ba45fe90bc27fb4a71a9ae07fef143f3"
         #api_url = f"https://api.avax-test.network/ext/bc/C/rpc" #AVAX C-chain testnet
 
     if chain == 'destination':  # The destination contract chain is bsc
-        api_url = f"https://bsc-testnet.core.chainstack.com/667b352ff087d91ed487c1049aedc664"
+        api_url = f"https://bsc-testnet.core.chainstack.com/617ec8fbe82ed75f59d20f6d3166a214"
         #api_url = f"https://data-seed-prebsc-1-s1.binance.org:8545/" #BSC testnet
 
     if chain in ['source','destination']:
