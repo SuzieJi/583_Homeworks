@@ -6,89 +6,76 @@ import "forge-std/console.sol";
 import "../src/Source.sol";
 import "../src/Destination.sol";
 
-contract Deploy is Script {
-    
-    // ERC20 token addresses from erc20s.csv
-    address[] erc20Tokens = [
+contract DeployBridgeContracts is Script {
+
+    address[] public tokenList = [
         0xc677c31AD31F73A5290f5ef067F8CEF8d301e45c,
         0x0773b81e0524447784CcE1F3808fed6AaA156eC8
     ];
 
     function run() external {
-        // Get private key from environment variable
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
-        
-        console.log("Deploying contracts with account:", deployer);
-        console.log("Chain ID:", block.chainid);
+        uint256 key = vm.envUint("PRIVATE_KEY");
+        address sender = vm.addr(key);
 
-        vm.startBroadcast(deployerPrivateKey);
+        console.log("Using address:", sender);
+        console.log("Running on chain ID:", block.chainid);
+
+        vm.startBroadcast(key);
 
         if (block.chainid == 43113) {
-            // Avalanche testnet - Deploy Source contract
-            deploySourceContract(deployer);
+            deploySource(sender);
         } else if (block.chainid == 97) {
-            // BSC testnet - Deploy Destination contract  
-            deployDestinationContract(deployer);
+            deployDestination(sender);
         } else {
-            console.log("Unsupported chain ID:", block.chainid);
-            return;
+            console.log("Unrecognized network:", block.chainid);
         }
 
         vm.stopBroadcast();
     }
 
-    function deploySourceContract(address admin) internal {
-        console.log("\n=== Deploying Source Contract on Avalanche ===");
-        
-        Source source = new Source(admin);
-        console.log("Source contract deployed to:", address(source));
+    function deploySource(address owner) internal {
+        console.log("\n>> Deploying Source contract on Avalanche Fuji...");
 
-        // Register tokens
-        console.log("\n=== Registering Tokens on Source ===");
-        for (uint i = 0; i < erc20Tokens.length; i++) {
-            address token = erc20Tokens[i];
-            
-            // Check if already registered
-            if (!source.approved(token)) {
-                source.registerToken(token);
-                console.log("Token registered:", token);
+        Source src = new Source(owner);
+        console.log("Source contract deployed at:", address(src));
+
+        console.log("\n>> Registering tokens with Source...");
+        for (uint i = 0; i < tokenList.length; i++) {
+            address token = tokenList[i];
+
+            if (!src.approved(token)) {
+                src.registerToken(token);
+                console.log("Registered token:", token);
             } else {
                 console.log("Token already registered:", token);
             }
         }
 
-        console.log("\n=== Source Deployment Complete ===");
-        console.log("Source Contract Address:", address(source));
-        console.log("Save this address to your contract_info.json file");
+        console.log("\nSource deployment finished.");
     }
 
-    function deployDestinationContract(address admin) internal {
-        console.log("\n=== Deploying Destination Contract on BSC ===");
-        
-        Destination destination = new Destination(admin);
-        console.log("Destination contract deployed to:", address(destination));
+    function deployDestination(address owner) internal {
+        console.log("\n>> Deploying Destination contract on BSC Testnet...");
 
-        // Create wrapped tokens
-        console.log("\n=== Creating Wrapped Tokens on Destination ===");
-        for (uint i = 0; i < erc20Tokens.length; i++) {
-            address token = erc20Tokens[i];
-            
-            // Check if wrapped token already exists
-            if (destination.wrapped_tokens(token) == address(0)) {
-                string memory name = string(abi.encodePacked("Wrapped Token ", vm.toString(i + 1)));
-                string memory symbol = string(abi.encodePacked("WT", vm.toString(i + 1)));
-                
-                address wrappedToken = destination.createToken(token, name, symbol);
-                console.log("Wrapped token created for", token);
-                console.log("Wrapped token address:", wrappedToken);
+        Destination dst = new Destination(owner);
+        console.log("Destination contract deployed at:", address(dst));
+
+        console.log("\n>> Creating wrapped versions of tokens...");
+        for (uint i = 0; i < tokenList.length; i++) {
+            address originToken = tokenList[i];
+
+            if (dst.wrapped_tokens(originToken) == address(0)) {
+                string memory tokenName = string.concat("WrappedToken", vm.toString(i + 1));
+                string memory tokenSymbol = string.concat("WT", vm.toString(i + 1));
+
+                address wrapped = dst.createToken(originToken, tokenName, tokenSymbol);
+                console.log("Created wrapped token for:", originToken);
+                console.log("Wrapped token address:", wrapped);
             } else {
-                console.log("Wrapped token already exists for:", token);
+                console.log("Wrapped token already exists for:", originToken);
             }
         }
 
-        console.log("\n=== Destination Deployment Complete ===");
-        console.log("Destination Contract Address:", address(destination));
-        console.log("Save this address to your contract_info.json file");
+        console.log("\nDestination deployment finished.");
     }
 }
