@@ -50,92 +50,117 @@ def scan_blocks(chain, contract_info="contract_info.json"):
         return 0
     
     #YOUR CODE HERE
-    # 1. Load on‑chain info
-    info = get_contract_info(chain, contract_info)
     w3 = connect_to(chain)
+    info = get_contract_info(chain, contract_info)
+    contract = w3.eth.contract(address=info['address'], abi=info['abi'])
 
-    # 2. Prepare our own contract instance
-    my_address    = info["address"]
-    my_abi        = info["abi"]
-    my_priv_key   = info["private_key"]
-    my_account    = w3.eth.account.from_key(my_priv_key).address
-    my_contract   = w3.eth.contract(address=my_address, abi=my_abi)
+    end_blk = w3.eth.get_block_number()
+    start_blk = end_blk - 10
 
-    # 3. Determine counterpart chain + contract
-    if chain == "source":
-        event_name      = "Deposit"
-        other_chain     = "destination"
-        other_info      = get_contract_info(other_chain, contract_info)
-        other_w3        = connect_to(other_chain)
-        other_contract  = other_w3.eth.contract(
-                             address=other_info["address"],
-                             abi=other_info["abi"]
-                          )
-        other_priv_key  = other_info["private_key"]
-        other_account   = other_w3.eth.account.from_key(other_priv_key).address
+    print(f"[{chain.upper()}] Checking blocks {start_blk} to {end_blk}")
 
-    else:  # destination
-        event_name      = "Unwrap"
-        other_chain     = "source"
-        other_info      = get_contract_info(other_chain, contract_info)
-        other_w3        = connect_to(other_chain)
-        other_contract  = other_w3.eth.contract(
-                             address=other_info["address"],
-                             abi=other_info["abi"]
-                          )
-        other_priv_key  = other_info["private_key"]
-        other_account   = other_w3.eth.account.from_key(other_priv_key).address
+    if chain == 'source':
+        time.sleep(60)
 
-    # 4. Scan the last 5 blocks
-    latest     = w3.eth.get_block_number()
-    start_block= max(0, latest - 5)
-    print(f"Scanning {chain} blocks {start_block} → {latest}")
+        dst_w3 = connect_to('destination')
+        dst_info = get_contract_info('destination', contract_info)
+        dst_contract = dst_w3.eth.contract(address=dst_info['address'], abi=dst_info['abi'])
 
-    # 5. Pull events in bulk
-    event_obj = getattr(my_contract.events, event_name)
-    filt = event_obj.createFilter(fromBlock=start_block, toBlock=latest)
-    entries = filt.get_all_entries()
+        try:
+            deposits = contract.events.Deposit().get_logs(from_block=start_blk, to_block=end_blk)
+            deposits.sort(key=lambda log: (log.blockNumber, log.logIndex))
+            print(f"Detected {len(deposits)} deposit(s)")
 
-    for evt in entries:
-        # 6. Extract common fields
-        tx_hash = evt.transactionHash.hex()
-        print(f"  • {event_name} @ block {evt.blockNumber}, tx {tx_hash}")
+            for idx, evt in enumerate(deposits):
+                token, user, amt = evt.args['token'], evt.args['recipient'], evt.args['amount']
+                print(f"[{idx+1}] Wrapping {amt} of token {token} to {user}")
 
-        if event_name == "Deposit":
-            token     = evt.args["token"]
-            recipient = evt.args["recipient"]
-            amount    = evt.args["amount"]
+                key = dst_info.get('warden_key')
+                executor = dst_w3.eth.account.from_key(key)
+                nonce = dst_w3.eth.get_transaction_count(executor.address)
 
-            # 7 Build wrap() call on destination
-            tx = other_contract.functions.wrap(
-                     token, recipient, amount
-                 ).buildTransaction({
-                     "from": other_account,
-                     "nonce": other_w3.eth.get_transaction_count(other_account),
-                     "gas": 200_000,
-                     "gasPrice": other_w3.eth.gas_price,
-                 })
-            sig = other_w3.eth.account.sign_transaction(tx, other_priv_key)
-            sent = other_w3.eth.send_raw_transaction(sig.rawTransaction)
-            print(f"    → wrap() sent: {sent.hex()}")
+                try:
+                    gas = dst_contract.functions.wrap(token, user, amt).estimate_gas({'from': executor.address})
+                    limit = int(gas * 1.2)
+                except:
+                    limit = 200000
 
-        else:  # Unwrap
-            underlying = evt.args["underlying_token"]
-            wrapped    = evt.args["wrapped_token"]
-            frm        = evt.args["frm"]
-            to_addr    = evt.args["to"]
-            amount     = evt.args["amount"]
+                tx = dst_contract.functions.wrap(token, user, amt).build_transaction({
+                    'from': executor.address,
+                    'nonce': nonce,
+                    'gas': limit,
+                    'gasPrice': dst_w3.eth.gas_price
+                })
 
-            # 7 Build withdraw() call on source
-            tx = other_contract.functions.withdraw(
-                     wrapped, to_addr, amount
-                 ).buildTransaction({
-                     "from": other_account,
-                     "nonce": other_w3.eth.get_transaction_count(other_account),
-                     "gas": 200_000,
-                     "gasPrice": other_w3.eth.gas_price,
-                 })
-            sig = other_w3.eth.account.sign_transaction(tx, other_priv_key)
-            sent = other_w3.eth.send_raw_transaction(sig.rawTransaction)
-            print(f"    → withdraw() sent: {sent.hex()}")
+                signed_tx = dst_w3.eth.account.sign_transaction(tx, key)
+                tx_hash = dst_w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+                print(f"Wrap TX submitted: {tx_hash.hex()}")
 
+                rcpt = dst_w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+                print(f"Confirmed on block {rcpt.blockNumber}")
+
+                if idx + 1 < len(deposits):
+                    time.sleep(1)
+
+        except Exception as err:
+            print(f"[ERROR] Wrap phase failed: {err}")
+
+    elif chain == 'destination':
+        time.sleep(30)
+
+        src_w3 = connect_to('source')
+        src_info = get_contract_info('source', contract_info)
+        src_contract = src_w3.eth.contract(address=src_info['address'], abi=src_info['abi'])
+
+        unwrap_logs = []
+        retries = 5
+        print(f"Monitoring Unwrap events one block at a time...")
+
+        for blk in range(start_blk, end_blk + 1):
+            for attempt in range(retries):
+                try:
+                    logs = contract.events.Unwrap().get_logs(from_block=blk, to_block=blk)
+                    logs.sort(key=lambda log: (log.blockNumber, log.logIndex))
+                    unwrap_logs.extend(logs)
+                    print(f"✓ Block {blk} processed")
+                    break
+                except Exception as e:
+                    print(f"Retry {attempt + 1}/{retries} failed on block {blk}: {e}")
+                    time.sleep(min(2 ** attempt + uniform(0.1, 0.6), 10))
+            else:
+                print(f"[WARN] Skipped block {blk} after retries")
+
+        print(f"Found {len(unwrap_logs)} unwrap request(s)")
+
+        for idx, evt in enumerate(unwrap_logs):
+            token = evt.args['underlying_token']
+            target = evt.args['to']
+            amount = evt.args['amount']
+
+            print(f"[{idx+1}] Preparing withdrawal of {amount} {token} to {target}")
+            key = src_info.get('warden_key')
+            signer = src_w3.eth.account.from_key(key)
+            nonce = src_w3.eth.get_transaction_count(signer.address)
+
+            try:
+                gas = src_contract.functions.withdraw(token, target, amount).estimate_gas({'from': signer.address})
+                limit = int(gas * 1.2)
+            except:
+                limit = 200000
+
+            tx = src_contract.functions.withdraw(token, target, amount).build_transaction({
+                'from': signer.address,
+                'nonce': nonce,
+                'gas': limit,
+                'gasPrice': src_w3.eth.gas_price
+            })
+
+            signed_tx = src_w3.eth.account.sign_transaction(tx, key)
+            tx_hash = src_w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            print(f"Withdraw TX sent: {tx_hash.hex()}")
+
+            rcpt = src_w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            print(f"Confirmed withdrawal in block {rcpt.blockNumber}")
+
+            if idx + 1 < len(unwrap_logs):
+                time.sleep(2)
